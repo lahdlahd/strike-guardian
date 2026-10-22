@@ -143,10 +143,10 @@ h2 { font-size: 15px; font-weight: 800; font-variation-settings: "wdth" 112; mar
   width: 86px; flex: none; font-weight: 800; font-size: 13px; font-variation-settings: "wdth" 118;
   padding: 2px 0; text-align: center; border-radius: var(--radius-s);
 }
-.v[data-v="APPROVE"], .v[data-v="WIN"], .v[data-v="SENT"] { color: var(--approve); background: var(--approve-wash); }
-.v[data-v="BLOCK"], .v[data-v="LOSS"], .v[data-v="FAILED"] { color: var(--block); background: var(--block-wash); }
+.v[data-v="APPROVE"], .v[data-v="SENT"] { color: var(--approve); background: var(--approve-wash); }
+.v[data-v="BLOCK"], .v[data-v="FAILED"] { color: var(--block); background: var(--block-wash); }
 .v[data-v="PAUSE"], .v[data-v="KILL"] { color: var(--pause); background: var(--pause-wash); }
-.v[data-v="BOOT"], .v[data-v="NOT_FILLED"] { color: var(--ink-2); background: var(--sheet); border: 1px solid var(--rule); }
+.v[data-v="BOOT"], .v[data-v="NOT_FILLED"], .v[data-v="WIN"], .v[data-v="LOSS"] { color: var(--ink-2); background: var(--sheet); border: 1px solid var(--rule); }
 .what { min-width: 0; flex: 1; }
 .what strong { font-weight: 700; }
 .what p { margin: 2px 0 0; color: var(--ink-2); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

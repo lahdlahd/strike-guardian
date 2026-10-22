@@ -33,6 +33,7 @@ interface TrackedTrade {
   symbol: string;
   side: "long" | "short";
   equityAtOpen: number;
+  walletAtOpen?: number; // realized-only baseline (wallet balance excludes unrealized PnL of other positions)
   placedAt: number;
   seenOpen: boolean;
   cyclesUnseen: number;
@@ -158,13 +159,15 @@ async function main() {
         } catch {
           /* nothing to cancel */
         }
-        const pnl = equity - t.equityAtOpen;
+        const wallet = Number(account.wallet_balance);
+        // Wallet balance moves only on realized PnL, fees and funding, so other open positions can't leak in.
+        const pnl = t.walletAtOpen !== undefined ? wallet - t.walletAtOpen : equity - t.equityAtOpen;
         const result = !t.seenOpen ? "not_filled" : pnl < 0 ? "loss" : "win";
         if (result === "loss") risk = { ...risk, consecutiveLosses: risk.consecutiveLosses + 1, lastLossAt: started };
         if (result === "win") risk = { ...risk, consecutiveLosses: 0 };
         await ledger.write(
           "outcome",
-          { proposalId: t.proposalId, side: t.side, result, pnlUsdApprox: Number(pnl.toFixed(4)), equityAtOpen: t.equityAtOpen, equityNow: equity, heldMinutes: Math.round((started - t.placedAt) / 60000), note: "PnL approximated from equity change; includes fees & funding" },
+          { proposalId: t.proposalId, side: t.side, result, pnlUsdApprox: Number(pnl.toFixed(4)), equityAtOpen: t.equityAtOpen, equityNow: equity, heldMinutes: Math.round((started - t.placedAt) / 60000), note: t.walletAtOpen !== undefined ? "Realized PnL from wallet-balance change; includes fees & funding. Strike's trade history is authoritative." : "Approximated from equity change (legacy). Strike's trade history is authoritative." },
           { symbol: t.symbol, verdict: result.toUpperCase() }
         );
         log(`outcome ${t.symbol} ${result} ${pnl >= 0 ? "+" : ""}${pnl.toFixed(4)}`);
@@ -226,7 +229,7 @@ async function main() {
               sl_order: { client_order_id: `${strategyId}-sl`, type: "stop", size: plan.size, stop_price: plan.stopPrice, working_type: "mark_price" },
             });
             // The order is live on Strike now: remember it FIRST, so a database blip can't make us forget it.
-            tracked.push({ proposalId: proposal.id, symbol, side: proposal.side, equityAtOpen: equity, placedAt: Date.now(), seenOpen: false, cyclesUnseen: 0 });
+            tracked.push({ proposalId: proposal.id, symbol, side: proposal.side, equityAtOpen: equity, walletAtOpen: Number(account.wallet_balance), placedAt: Date.now(), seenOpen: false, cyclesUnseen: 0 });
             positions.push({ symbol, size: plan.side === "buy" ? plan.size : `-${plan.size}`, entry_price: String(live) } as PositionResponse); // exposure for the rest of this cycle
             log(`SENT    ${symbol} bracket ${plan.side} ${plan.size} · seq ${r.sequence_id}`);
             const execBody = { proposalId: proposal.id, plan, request: { endpoint: "POST /v2/order/strategy", strategyId }, response: r as unknown as Record<string, unknown> };

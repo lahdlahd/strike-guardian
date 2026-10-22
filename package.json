@@ -17,7 +17,8 @@
     "build": "next build",
     "start": "next start",
     "explain:test": "tsx scripts/explain-test.ts",
-    "report": "tsx scripts/report.ts"
+    "report": "tsx scripts/report.ts",
+    "export": "tsx scripts/export.ts"
   },
   "engines": {
     "node": ">=20"

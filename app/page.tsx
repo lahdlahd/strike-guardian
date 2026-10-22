@@ -25,7 +25,7 @@ const SHORT: Record<string, string> = {
   daily_loss: "Daily loss", cooldown: "Cooldown",
 };
 const WORD: Record<string, string> = {
-  APPROVE: "Approved", BLOCK: "Blocked", PAUSE: "Paused", SENT: "Sent", WIN: "Profit", LOSS: "Loss",
+  APPROVE: "Approved", BLOCK: "Blocked", PAUSE: "Paused", SENT: "Sent", WIN: "Closed", LOSS: "Closed",
   NOT_FILLED: "Not filled", FAILED: "Failed", BOOT: "Started", KILL: "Killed",
 };
 
@@ -97,7 +97,7 @@ function Row({ a, prev, llm }: { a: Artifact; prev?: Artifact; llm?: Expl }) {
     line = `Size ${b.plan?.size}, stop ${b.plan?.stopPrice}, target ${b.plan?.takeProfitPrice}. Strike sequence #${a.strike?.sequence_id}.`;
   } else if (a.kind === "outcome") {
     title = `${a.symbol} position closed`;
-    line = `${b.result === "not_filled" ? "Entry never filled." : `${b.pnlUsdApprox >= 0 ? "+" : ""}${money(b.pnlUsdApprox)} after ${b.heldMinutes} min (approx., from equity change).`}`;
+    line = b.result === "not_filled" ? "Entry never filled." : `Closed on Strike by its stop-loss or take-profit after ${b.heldMinutes} min. Strike's trade history has the exact P&L.`;
   } else if (a.kind === "boot") {
     title = `Agent started (${b.live ? "live" : "dry run"})`;
     line = `Watching ${(b.watchlist ?? []).join(", ")} on ${b.interval} candles. Policy ${String(b.policyHash).slice(0, 10)}.`;
@@ -268,7 +268,7 @@ export default function Page() {
           <h2>Track record</h2>
           <p className="summary">
             {state && state.stats.decisions > 0 ? (
-              <>The proposer suggested {state.stats.decisions} trades. The Guardian <span className="a">approved {v.APPROVE}</span>, <span className="b">blocked {v.BLOCK}</span>{v.PAUSE ? <> and <span className="p">paused trading on {v.PAUSE}</span></> : null}. {state.stats.executions} orders reached Strike{state.stats.outcomes.wins + state.stats.outcomes.losses > 0 ? `, ${state.stats.outcomes.wins} closed in profit and ${state.stats.outcomes.losses} at a loss` : ""}.</>
+              <>The proposer suggested {state.stats.decisions} trades. The Guardian <span className="a">approved {v.APPROVE}</span>, <span className="b">blocked {v.BLOCK}</span>{v.PAUSE ? <> and <span className="p">paused trading on {v.PAUSE}</span></> : null}. {state.stats.executions} orders reached Strike as bracket orders{state.stats.outcomes.wins + state.stats.outcomes.losses > 0 ? `, and ${state.stats.outcomes.wins + state.stats.outcomes.losses} have been closed on Strike by their own stop-loss or take-profit` : ""}.</>
             ) : (
               "Nothing judged yet."
             )}
@@ -302,7 +302,7 @@ export default function Page() {
             <dl className="kv">
               <dt>Available</dt><dd>{hb ? money(hb.available) : "n/a"}</dd>
               <dt>Loss streak</dt><dd>{state?.risk?.consecutiveLosses ?? 0}</dd>
-              <dt>Approx. P&amp;L closed</dt><dd>{state ? money(state.stats.outcomes.total) : "n/a"}</dd>
+              <dt>Orders sent to Strike</dt><dd>{state?.stats.executions ?? 0}</dd>
             </dl>
           </section>
           <section>

@@ -8,3 +8,4 @@ smoke-report.json
 .env
 .env.*
 !.env.example
+ledger-export.json
