@@ -68,6 +68,25 @@ export class StrikeClient {
     path: string,
     opts: { body?: object; auth?: boolean; builderFee?: boolean } = {}
   ): Promise<T> {
+    try {
+      return await this.requestOnce<T>(base, method, path, opts);
+    } catch (e) {
+      // Strike rejects stale/future timestamps at authentication, BEFORE anything executes, so
+      // re-syncing the clock and re-signing once is safe for reads and writes alike.
+      if (opts.auth && e instanceof StrikeApiError && e.status === 401 && /signature expired|invalid timestamp/i.test(e.body)) {
+        await this.syncClock();
+        return this.requestOnce<T>(base, method, path, opts);
+      }
+      throw e;
+    }
+  }
+
+  private async requestOnce<T>(
+    base: string,
+    method: "GET" | "POST" | "DELETE",
+    path: string,
+    opts: { body?: object; auth?: boolean; builderFee?: boolean } = {}
+  ): Promise<T> {
     const bodyStr = opts.body && method !== "GET" ? JSON.stringify(opts.body) : "";
     // Reads retry on network errors / 429 / 5xx. Writes NEVER auto-retry: a lost response is
     // indistinguishable from a lost request, and a blind retry could double an order. The agent
@@ -129,6 +148,7 @@ export class StrikeClient {
   async syncClock(): Promise<number> {
     const before = Date.now();
     const r = await this.api<{ serverTime: number }>("GET", "/v2/time");
+    if (!Number.isFinite(r?.serverTime) || r.serverTime < 1.6e12) throw new Error(`bad /v2/time response: ${JSON.stringify(r).slice(0, 80)}`);
     const rtt = Date.now() - before;
     const offsetSec = (r.serverTime + rtt / 2 - Date.now()) / 1000;
     setServerOffset(offsetSec);

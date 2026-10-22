@@ -52,3 +52,33 @@ test("error messages carry the underlying network cause", async () => {
     m.restore();
   }
 });
+
+test("stale-timestamp 401 → re-sync clock from /v2/time and retry once (writes included)", async () => {
+  const now = Date.now();
+  const m = mockFetch([
+    () => new Response(JSON.stringify({ error: "signature expired or invalid timestamp" }), { status: 401 }),
+    ok({ serverTime: now + 200_000 }), // server is 200s ahead of us
+    ok({ sequence_id: 7, message_id: "m" }),
+  ]);
+  try {
+    const c = new StrikeClient({ keys: generateKeys(), network: "mainnet" });
+    const r = await c.placeOrder({ symbol: "BTC-USD", side: "buy", type: "market", size: "0.0002" });
+    assert.equal(r.sequence_id, 7);
+    assert.equal(m.calls.length, 3);
+    assert.match(m.calls[1].url, /\/v2\/time$/);
+    assert.ok(c.clockOffset > 150 && c.clockOffset < 250, `offset ${c.clockOffset}`);
+  } finally {
+    m.restore();
+  }
+});
+
+test("other 401s are NOT retried", async () => {
+  const m = mockFetch([() => new Response(JSON.stringify({ error: "authentication failed" }), { status: 401 })]);
+  try {
+    const c = new StrikeClient({ keys: generateKeys(), network: "mainnet" });
+    await assert.rejects(() => c.account(), /401/);
+    assert.equal(m.calls.length, 1);
+  } finally {
+    m.restore();
+  }
+});
