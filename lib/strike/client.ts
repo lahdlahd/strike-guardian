@@ -24,6 +24,15 @@ import {
   type SequencedResponse,
 } from "./types.ts";
 
+/** Node's fetch hides the real reason in error.cause (ENOTFOUND, ECONNRESET, ETIMEDOUT…). */
+export function describeNetworkError(e: unknown): string {
+  const err = e as { name?: string; message?: string; cause?: { code?: string; message?: string; errors?: { code?: string }[] } };
+  if (err?.name === "AbortError") return "timed out";
+  const c = err?.cause;
+  const code = c?.code ?? c?.errors?.map((x) => x.code).filter(Boolean).join("/");
+  return [err?.message ?? String(e), code, c?.message && c.message !== err?.message ? c.message : ""].filter(Boolean).join(" · ");
+}
+
 export interface StrikeClientOptions {
   network?: string;
   keys?: ApiWalletKeys | null;
@@ -60,31 +69,47 @@ export class StrikeClient {
     opts: { body?: object; auth?: boolean; builderFee?: boolean } = {}
   ): Promise<T> {
     const bodyStr = opts.body && method !== "GET" ? JSON.stringify(opts.body) : "";
-    const headers: Record<string, string> = {};
-    if (bodyStr) headers["Content-Type"] = "application/json";
+    // Reads retry on network errors / 429 / 5xx. Writes NEVER auto-retry: a lost response is
+    // indistinguishable from a lost request, and a blind retry could double an order. The agent
+    // instead reconciles against real positions on the next cycle.
+    const isWrite = method !== "GET";
+    const maxAttempts = isWrite ? 1 : 4;
 
-    if (opts.auth) {
-      if (!this.keys) throw new Error(`${method} ${path} needs an API wallet (STRIKE_API_PRIVATE_KEY)`);
-      // Signature covers the path as the server sees it. For /price/... calls the
-      // base already carries the /price prefix, so include it.
-      const signedPath = new URL(base + path).pathname + new URL(base + path).search;
-      Object.assign(headers, signRequest(this.keys, method, signedPath, bodyStr));
-    }
-    if (opts.builderFee && this.builderFeeBps > 0) {
-      headers["X-Builder-Fee-Bps"] = String(this.builderFeeBps);
-    }
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const headers: Record<string, string> = {};
+      if (bodyStr) headers["Content-Type"] = "application/json";
+      if (opts.auth) {
+        if (!this.keys) throw new Error(`${method} ${path} needs an API wallet (STRIKE_API_PRIVATE_KEY)`);
+        // Fresh timestamp + nonce every attempt (nonces are single-use).
+        const u = new URL(base + path);
+        Object.assign(headers, signRequest(this.keys, method, u.pathname + u.search, bodyStr));
+      }
+      if (opts.builderFee && this.builderFeeBps > 0) headers["X-Builder-Fee-Bps"] = String(this.builderFeeBps);
 
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), this.timeoutMs);
-    let res: Response;
-    try {
-      res = await fetch(base + path, { method, headers, body: bodyStr || undefined, signal: ctrl.signal });
-    } finally {
-      clearTimeout(t);
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), this.timeoutMs);
+      try {
+        const res = await fetch(base + path, { method, headers, body: bodyStr || undefined, signal: ctrl.signal });
+        const text = await res.text();
+        if (res.ok) return (text ? JSON.parse(text) : {}) as T;
+        const err = new StrikeApiError(res.status, method, path, text);
+        // Retry only transient server-side conditions, and never a write that got a real answer.
+        if (!isWrite && (res.status === 429 || res.status >= 500) && attempt < maxAttempts) {
+          lastErr = err;
+        } else {
+          throw err;
+        }
+      } catch (e) {
+        if (e instanceof StrikeApiError) throw e;
+        lastErr = new Error(`${method} ${path}: ${describeNetworkError(e)}`);
+        if (attempt >= maxAttempts) throw lastErr;
+      } finally {
+        clearTimeout(t);
+      }
+      await new Promise((r) => setTimeout(r, 400 * 2 ** (attempt - 1)));
     }
-    const text = await res.text();
-    if (!res.ok) throw new StrikeApiError(res.status, method, path, text);
-    return (text ? JSON.parse(text) : {}) as T;
+    throw lastErr;
   }
 
   private api<T>(method: "GET" | "POST" | "DELETE", path: string, o?: { body?: object; auth?: boolean; builderFee?: boolean }) {

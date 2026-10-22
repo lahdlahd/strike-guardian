@@ -11,7 +11,7 @@
  */
 
 import "dotenv/config";
-import { StrikeClient } from "../lib/strike/client.ts";
+import { StrikeClient, describeNetworkError } from "../lib/strike/client.ts";
 import { loadKeysFromEnv, publicKeyFromPrivate } from "../lib/strike/auth.ts";
 import { StrikeApiError, type Market, type PositionResponse } from "../lib/strike/types.ts";
 import { propose, type TradeProposal } from "../lib/strategy/proposer.ts";
@@ -42,7 +42,7 @@ interface Control {
 }
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
-const errMsg = (e: unknown) => (e instanceof StrikeApiError ? `${e.status} ${e.body.slice(0, 200)}` : (e as Error)?.message ?? String(e));
+const errMsg = (e: unknown) => (e instanceof StrikeApiError ? `${e.status} ${e.body.slice(0, 200)}` : describeNetworkError(e));
 const utcDay = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 async function main() {
@@ -160,6 +160,7 @@ async function main() {
       await store.setState("risk", risk);
 
       // Evaluate each watched symbol
+      let proposalsThisCycle = 0;
       for (const symbol of WATCH) {
         if (control.paused) break;
         const market: Market | undefined = markets[symbol];
@@ -168,6 +169,7 @@ async function main() {
           const raw = propose(symbol, INTERVAL, candles);
           if (!raw || seen.has(raw.id)) continue;
           seen.add(raw.id);
+          proposalsThisCycle++;
 
           // Re-anchor entry to the live mark: if price already ran through the stop, the Guardian will see it.
           const live = Number(market?.mark_price) || raw.entry;
@@ -217,6 +219,7 @@ async function main() {
 
       await store.setState("tracked_trades", tracked);
       await store.setState("seen_proposals", [...seen].slice(-500));
+      log(`cycle ${cycle} · equity $${equity.toFixed(2)} · ${positions.length} open · ${proposalsThisCycle} new proposal(s)${control.paused ? " · PAUSED" : ""}`);
       await store.setState("heartbeat", {
         at: Date.now(),
         cycle,
