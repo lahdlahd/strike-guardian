@@ -6,6 +6,7 @@ import type { Store } from "./store.ts";
 export class Ledger {
   private seq = 0;
   private prevHash = GENESIS;
+  private queue: Promise<unknown> = Promise.resolve(); // one write at a time → seq/prevHash never race
 
   constructor(
     private store: Store,
@@ -23,10 +24,25 @@ export class Ledger {
     }
   }
 
-  async write(
+  write(
     kind: ArtifactKind,
     body: Record<string, unknown>,
     meta: { symbol?: string; verdict?: string; strike?: Artifact["strike"]; now?: number } = {}
+  ): Promise<Artifact> {
+    const run = this.queue.then(() => this.writeNow(kind, body, meta));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Resolves once every queued write has landed (use before shutdown). */
+  async drain() {
+    await this.queue;
+  }
+
+  private async writeNow(
+    kind: ArtifactKind,
+    body: Record<string, unknown>,
+    meta: { symbol?: string; verdict?: string; strike?: Artifact["strike"]; now?: number }
   ): Promise<Artifact> {
     const unsigned = {
       v: 1 as const,

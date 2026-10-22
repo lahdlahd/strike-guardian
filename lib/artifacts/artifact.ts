@@ -20,7 +20,7 @@ import { canonicalJson } from "../util/canonical.ts";
 
 ed.hashes.sha512 = sha512;
 
-export type ArtifactKind = "boot" | "decision" | "execution" | "outcome" | "kill" | "error";
+export type ArtifactKind = "boot" | "decision" | "explanation" | "execution" | "outcome" | "kill" | "error";
 
 export interface Artifact<B = Record<string, unknown>> {
   v: 1;

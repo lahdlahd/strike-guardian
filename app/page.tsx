@@ -77,7 +77,9 @@ function sortKeys(v: unknown): unknown {
   return typeof v === "number" && !Number.isFinite(v) ? null : v;
 }
 
-function Row({ a, prev }: { a: Artifact; prev?: Artifact }) {
+type Expl = { text: string; source: string };
+
+function Row({ a, prev, llm }: { a: Artifact; prev?: Artifact; llm?: Expl }) {
   const [open, setOpen] = useState(false);
   const [proof, setProof] = useState<Proof | null>(null);
   const isDecision = a.kind === "decision";
@@ -89,7 +91,7 @@ function Row({ a, prev }: { a: Artifact; prev?: Artifact }) {
   let line = "";
   if (isDecision && d) {
     title = `${d.symbol} ${d.side}`;
-    line = b.explanation?.text ?? "";
+    line = llm?.text ?? b.explanation?.text ?? "";
   } else if (a.kind === "execution") {
     title = `${a.symbol} bracket order sent`;
     line = `Size ${b.plan?.size}, stop ${b.plan?.stopPrice}, target ${b.plan?.takeProfitPrice}. Strike sequence #${a.strike?.sequence_id}.`;
@@ -138,7 +140,7 @@ function Row({ a, prev }: { a: Artifact; prev?: Artifact }) {
           <dl className="facts">
             {d?.plan && (<><dt>Order</dt><dd>{d.plan.side} {d.plan.size} at market, {d.plan.leverage}x isolated, risking {money(d.plan.riskUsd)}{d.plan.sizedToExchangeMinimum ? " (Strike minimum size)" : ""}</dd></>)}
             {isDecision && b.inputs?.proposal && (<><dt>Proposal</dt><dd>{b.inputs.proposal.thesis} Confidence {b.inputs.proposal.confidence}.</dd></>)}
-            {isDecision && (<><dt>Explained by</dt><dd>{b.explanation?.source === "template" ? "fixed template" : b.explanation?.source}, after the verdict was set</dd></>)}
+            {isDecision && (<><dt>Explained by</dt><dd>{llm ? `${llm.source}, in a separate signed entry written after the verdict and order` : "fixed template (no model explanation recorded)"}</dd></>)}
             {a.strike?.sequence_id !== undefined && (<><dt>Strike sequence</dt><dd>#{a.strike.sequence_id}, message {a.strike.message_id}</dd></>)}
             <dt>Receipt</dt>
             <dd>#{a.seq}, hash {a.hash.slice(0, 16)}…{d ? `, policy ${d.policyHash.slice(0, 10)}` : ""}</dd>
@@ -205,7 +207,17 @@ export default function Page() {
     load();
   };
 
+  const bySeq = useMemo(() => new Map(items.map((a) => [a.seq, a])), [items]);
+  const llmFor = useMemo(() => {
+    const m = new Map<number, Expl>();
+    for (const a of items) if (a.kind === "explanation") {
+      const b = a.body as { decisionSeq: number; text: string; source: string };
+      m.set(b.decisionSeq, { text: b.text, source: b.source });
+    }
+    return m;
+  }, [items]);
   const latest = useMemo(() => items.find((a) => a.kind === "decision") as Artifact<DecisionBody> | undefined, [items]);
+  const latestText = latest ? llmFor.get(latest.seq)?.text ?? latest.body.explanation.text : "";
   const hb = state?.heartbeat;
   const hbAge = hb ? now - hb.at : Infinity;
   const pulse = !hb ? "idle" : hbAge < 180_000 ? "ok" : "stale";
@@ -233,7 +245,7 @@ export default function Page() {
           <>
             <p className="hero-meta">Latest decision, {time(latest.createdAt)}: {latest.body.decision.symbol} {latest.body.decision.side}, confidence {latest.body.inputs?.proposal.confidence ?? "n/a"}, {latest.body.decision.passed} of {latest.body.decision.total} checks passed</p>
             <h2 key={latest.seq} className="stamp stamp-in" data-v={latest.body.decision.verdict}>{WORD[latest.body.decision.verdict]}</h2>
-            <p className="hero-why">{latest.body.explanation.text}</p>
+            <p className="hero-why">{latestText}</p>
             <Gate checks={latest.body.decision.checks} legend />
             {latest.body.decision.verdict !== "APPROVE" && (
               <ul className="fails">
@@ -277,7 +289,7 @@ export default function Page() {
           )}
           <h2>Ledger</h2>
           <ol className="feed" reversed>
-            {items.map((a, i) => <Row key={a.seq} a={a} prev={items[i + 1]?.seq === a.seq - 1 ? items[i + 1] : undefined} />)}
+            {items.filter((a) => a.kind !== "explanation").map((a) => <Row key={a.seq} a={a} prev={bySeq.get(a.seq - 1)} llm={llmFor.get(a.seq)} />)}
           </ol>
           {items.length > 0 && items.at(-1)!.seq > 1 && <button className="ghost more" onClick={loadOlder}>Show older entries</button>}
         </div>

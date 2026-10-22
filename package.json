@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "explain:test": "tsx scripts/explain-test.ts"
   },
   "engines": {
     "node": ">=20"

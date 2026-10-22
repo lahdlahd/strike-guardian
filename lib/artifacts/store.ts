@@ -39,7 +39,11 @@ create table if not exists agent_state (
 class PgStore implements Store {
   private pool: pg.Pool;
   constructor(url: string) {
-    this.pool = new pg.Pool({ connectionString: url, max: 3, ssl: url.includes("localhost") ? undefined : { rejectUnauthorized: false } });
+    // TLS comes from the URL's sslmode (Neon/Supabase: sslmode=verify-full → certificate verified).
+    // Only force TLS ourselves if the URL says nothing; never disable verification.
+    const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+    const hasMode = /[?&]sslmode=/.test(url);
+    this.pool = new pg.Pool({ connectionString: url, max: 3, ...(local || hasMode ? {} : { ssl: true }) });
   }
   async init() {
     await this.pool.query(SCHEMA_SQL);

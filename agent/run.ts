@@ -6,8 +6,9 @@
  *
  * Each cycle:
  *   control flags → clock/market refresh → reconcile positions (outcomes) →
- *   for each watched symbol: closed candles → proposal → Guardian → Claude explains →
- *   signed decision artifact → (live + APPROVE) bracket order on Strike → signed execution artifact
+ *   for each watched symbol: closed candles → proposal → Guardian → signed decision artifact →
+ *   (live + APPROVE) bracket order on Strike → signed execution artifact.
+ *   Separately, an LLM writes a plain-English explanation as its own signed artifact — never on the trading path.
  */
 
 import "dotenv/config";
@@ -17,7 +18,7 @@ import { StrikeApiError, type Market, type PositionResponse } from "../lib/strik
 import { propose, type TradeProposal } from "../lib/strategy/proposer.ts";
 import { evaluate, type RiskState } from "../lib/guardian/engine.ts";
 import { DEFAULT_POLICY, policyHash } from "../lib/guardian/policy.ts";
-import { explain } from "../lib/ai/explainer.ts";
+import { explain, explainerSource, templateExplanation } from "../lib/ai/explainer.ts";
 import { openStore } from "../lib/artifacts/store.ts";
 import { Ledger } from "../lib/artifacts/ledger.ts";
 
@@ -87,14 +88,16 @@ async function main() {
     equity: Number(acct.wallet_balance) + Number(acct.unrealized_pnl || 0),
     clockDriftSec: Number(drift.toFixed(2)),
     builderFeeBps: Number(process.env.STRIKE_BUILDER_FEE_BPS ?? 0),
+    explainer: explainerSource(),
     marketSetup: setup,
   });
-  log(`boot · ${strike.cfg.network} · ${LIVE ? "LIVE" : "DRY RUN"} · ${WATCH.join(",")} · ${INTERVAL} · equity $${acct.wallet_balance}`);
+  log(`boot · ${strike.cfg.network} · ${LIVE ? "LIVE" : "DRY RUN"} · ${WATCH.join(",")} · ${INTERVAL} · equity $${acct.wallet_balance} · explainer ${explainerSource()}`);
 
   const seen = new Set<string>((await store.getState<string[]>("seen_proposals")) ?? []);
   let tracked: TrackedTrade[] = (await store.getState<TrackedTrade[]>("tracked_trades")) ?? [];
   let cycle = 0;
   let stopping = false;
+  const pendingExplains = new Set<Promise<unknown>>();
   let wake: (() => void) | null = null;
   const stop = (sig: string) => {
     if (stopping) {
@@ -188,10 +191,22 @@ async function main() {
           // Record the COMPLETE Guardian input so anyone can replay the verdict (npm run verify).
           const inputs = { proposal, market, depth, equity, available, positions, risk: { dayStartEquity: risk.dayStartEquity, consecutiveLosses: risk.consecutiveLosses, lastLossAt: risk.lastLossAt }, now: Date.now(), policy };
           const decision = evaluate(inputs);
-          const explanation = await explain(decision, proposal);
-
-          await ledger.write("decision", { inputs, decision, explanation, live: LIVE }, { symbol, verdict: decision.verdict });
-          log(`${decision.verdict.padEnd(7)} ${symbol} ${proposal.side} conf ${proposal.confidence} · ${decision.passed}/${decision.total} · ${explanation.source}`);
+          // Sign the decision NOW with the deterministic template; the LLM explains later, off the trading path.
+          const explanation = { text: templateExplanation(decision, proposal), source: "template" };
+          const decisionArtifact = await ledger.write("decision", { inputs, decision, explanation, live: LIVE }, { symbol, verdict: decision.verdict });
+          log(`${decision.verdict.padEnd(7)} ${symbol} ${proposal.side} conf ${proposal.confidence} · ${decision.passed}/${decision.total}`);
+          if (explainerSource() !== "template") {
+            const job: Promise<unknown> = explain(decision, proposal).then(async (e) => {
+              if (e.source === "template") {
+                log(`        explainer unavailable for #${decisionArtifact.seq}: ${e.fallbackReason ?? "no text"}`);
+                return;
+              }
+              await ledger.write("explanation", { decisionSeq: decisionArtifact.seq, decisionHash: decisionArtifact.hash, proposalId: proposal.id, text: e.text, source: e.source }, { symbol });
+              log(`        explained #${decisionArtifact.seq} via ${e.source}`);
+            }).catch((err) => log(`        explanation write failed: ${errMsg(err)}`));
+            pendingExplains.add(job);
+            void job.finally(() => pendingExplains.delete(job));
+          }
 
           if (decision.verdict !== "APPROVE" || !decision.plan) continue;
           if (!LIVE) continue;
@@ -256,6 +271,11 @@ async function main() {
     });
     wake = null;
   }
+  if (pendingExplains.size) {
+    log(`waiting up to 5s for ${pendingExplains.size} explanation(s)…`);
+    await Promise.race([Promise.allSettled([...pendingExplains]), new Promise((r) => setTimeout(r, 5_000))]);
+  }
+  await ledger.drain();
   await store.close();
   log("stopped");
 }
