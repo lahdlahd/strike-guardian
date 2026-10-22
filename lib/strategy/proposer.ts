@@ -8,11 +8,13 @@
  * Deterministic: same candles in → same proposal out.
  */
 
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type { Candle } from "../strike/types.ts";
 import { atr, ema, rsi } from "./indicators.ts";
 
 export const PROPOSE_FLOOR = 0.45;
+export const MIN_STOP_PCT = 0.0035; // 0.35%
 
 export interface TradeProposal {
   id: string; // deterministic: hash(symbol, side, candle time)
@@ -77,11 +79,13 @@ export function propose(symbol: string, interval: string, candlesIn: Candle[]): 
   const confidence = r(0.35 * trendScore + 0.3 * momScore + 0.15 * accelScore + 0.2 * volScore, 2);
   if (confidence < PROPOSE_FLOOR) return null;
 
-  const stopDist = 1.5 * a;
+  // Stop = 1.5×ATR, but never closer than MIN_STOP_PCT: on 5m majors 1.5×ATR is often ~0.1–0.2%,
+  // which sits inside normal noise and would fail the Guardian's 0.2% floor anyway.
+  const stopDist = Math.max(1.5 * a, price * MIN_STOP_PCT);
   const stopLoss = price - dir * stopDist;
   const takeProfit = price + dir * stopDist * 2;
 
-  const id = createHash("sha256").update(`${symbol}|${side}|${interval}|${last.openTime}`).digest("hex").slice(0, 16);
+  const id = bytesToHex(sha256(new TextEncoder().encode(`${symbol}|${side}|${interval}|${last.openTime}`))).slice(0, 16);
 
   return {
     id,
@@ -102,6 +106,6 @@ export function propose(symbol: string, interval: string, candlesIn: Candle[]): 
       trendGapPct: r(gapPct, 4),
       volumeRatio: r(volumeRatio, 2),
     },
-    thesis: `${symbol} ${side}: EMA20 ${side === "long" ? "above" : "below"} EMA50 by ${Math.abs(gapPct).toFixed(2)}%, RSI ${rs[i].toFixed(1)}, volume ${volumeRatio.toFixed(1)}x avg; stop 1.5×ATR, target 2R.`,
+    thesis: `${symbol} ${side}: EMA20 ${side === "long" ? "above" : "below"} EMA50 by ${Math.abs(gapPct).toFixed(2)}%, RSI ${rs[i].toFixed(1)}, volume ${volumeRatio.toFixed(1)}x avg; stop max(1.5×ATR, 0.35%), target 2R.`,
   };
 }

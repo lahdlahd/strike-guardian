@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { canonicalJson } from "../util/canonical.ts";
 
 export interface GuardianPolicy {
@@ -48,5 +49,5 @@ export const DEFAULT_POLICY: GuardianPolicy = {
 };
 
 export function policyHash(p: GuardianPolicy): string {
-  return createHash("sha256").update(canonicalJson(p)).digest("hex");
+  return bytesToHex(sha256(new TextEncoder().encode(canonicalJson(p))));
 }

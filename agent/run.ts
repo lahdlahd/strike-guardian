@@ -95,8 +95,18 @@ async function main() {
   let tracked: TrackedTrade[] = (await store.getState<TrackedTrade[]>("tracked_trades")) ?? [];
   let cycle = 0;
   let stopping = false;
-  process.on("SIGTERM", () => (stopping = true));
-  process.on("SIGINT", () => (stopping = true));
+  let wake: (() => void) | null = null;
+  const stop = (sig: string) => {
+    if (stopping) {
+      log(`${sig} again: forcing exit`);
+      process.exit(130);
+    }
+    stopping = true;
+    log(`${sig}: finishing current step and stopping (press Ctrl+C again to force)`);
+    wake?.(); // cut the between-cycle sleep short
+  };
+  process.on("SIGTERM", () => stop("SIGTERM"));
+  process.on("SIGINT", () => stop("SIGINT"));
 
   while (!stopping) {
     const started = Date.now();
@@ -162,7 +172,7 @@ async function main() {
       // Evaluate each watched symbol
       let proposalsThisCycle = 0;
       for (const symbol of WATCH) {
-        if (control.paused) break;
+        if (control.paused || stopping) break;
         const market: Market | undefined = markets[symbol];
         try {
           const candles = await strike.klines(symbol, INTERVAL, 200);
@@ -235,8 +245,16 @@ async function main() {
     } catch (e) {
       log(`cycle ${cycle} error: ${errMsg(e)}`);
     }
+    if (stopping) break;
     const wait = Math.max(1000, CYCLE_MS - (Date.now() - started));
-    await new Promise((r) => setTimeout(r, wait));
+    await new Promise<void>((r) => {
+      const t = setTimeout(r, wait);
+      wake = () => {
+        clearTimeout(t);
+        r();
+      };
+    });
+    wake = null;
   }
   await store.close();
   log("stopped");

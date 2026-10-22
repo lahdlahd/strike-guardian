@@ -12,7 +12,10 @@
     "resume": "tsx scripts/kill.ts --resume",
     "verify": "tsx scripts/verify.ts",
     "test": "tsx --test \"lib/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
   },
   "engines": {
     "node": ">=20"
@@ -22,12 +25,17 @@
     "@noble/ed25519": "3.2.0",
     "@noble/hashes": "2.4.0",
     "dotenv": "17.2.3",
+    "next": "16.4.2",
     "pg": "8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "ws": "8.22.0"
   },
   "devDependencies": {
     "@types/node": "22.19.1",
     "@types/pg": "8.23.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
     "@types/ws": "8.18.1",
     "tsx": "4.23.15",
     "typescript": "5.9.3"

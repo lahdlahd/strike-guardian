@@ -16,7 +16,6 @@
 import * as ed from "@noble/ed25519";
 import { sha512, sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-import { randomUUID } from "node:crypto";
 
 // @noble/ed25519 v3: sync sign/verify need sha512 wired in explicitly.
 ed.hashes.sha512 = sha512;
@@ -89,7 +88,7 @@ export function signRequest(
   // Never sign a future timestamp: use server-adjusted time minus a 1s safety margin
   // (the server allows up to 3 minutes of age, so 1s costs nothing).
   const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000 + serverOffsetSec) - 1;
-  const nonce = opts.nonce ?? randomUUID();
+  const nonce = opts.nonce ?? globalThis.crypto.randomUUID();
   const message = buildMessage(method, pathWithQuery, timestamp, nonce, body);
   const signature = ed.sign(new TextEncoder().encode(message), normalizePrivateKey(keys.privateKey));
   return {

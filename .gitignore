@@ -1,8 +1,10 @@
 node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+data/
+smoke-report.json
+*.log
 .env
 .env.*
 !.env.example
-smoke-report.json
-*.log
-.next/
-data/

@@ -17,7 +17,6 @@ import * as ed from "@noble/ed25519";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { canonicalJson } from "../util/canonical.ts";
-import { normalizePrivateKey } from "../strike/auth.ts";
 
 ed.hashes.sha512 = sha512;
 
@@ -41,13 +40,18 @@ export interface Artifact<B = Record<string, unknown>> {
 
 export const GENESIS = "0".repeat(64);
 
+function seed(hex: string): Uint8Array {
+  const b = hexToBytes(hex.trim().toLowerCase().replace(/^0x/, ""));
+  return b.length === 64 ? b.subarray(0, 32) : b;
+}
+
 export function hashArtifact(a: Omit<Artifact, "hash" | "signature">): string {
   return bytesToHex(sha256(new TextEncoder().encode(canonicalJson(a))));
 }
 
 export function signArtifact(unsigned: Omit<Artifact, "hash" | "signature">, attestPrivateKey: string): Artifact {
   const hash = hashArtifact(unsigned);
-  const signature = bytesToHex(ed.sign(new TextEncoder().encode(hash), normalizePrivateKey(attestPrivateKey)));
+  const signature = bytesToHex(ed.sign(new TextEncoder().encode(hash), seed(attestPrivateKey)));
   return { ...unsigned, hash, signature } as Artifact;
 }
 
