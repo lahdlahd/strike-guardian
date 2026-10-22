@@ -91,7 +91,7 @@ async function main() {
     explainer: explainerSource(),
     marketSetup: setup,
   });
-  log(`boot · ${strike.cfg.network} · ${LIVE ? "LIVE" : "DRY RUN"} · ${WATCH.join(",")} · ${INTERVAL} · equity $${acct.wallet_balance} · explainer ${explainerSource()}`);
+  log(`boot · ${strike.cfg.network} · ${LIVE ? "LIVE" : "DRY RUN"} · ${WATCH.join(",")} · ${INTERVAL} · equity $${Number(acct.wallet_balance).toFixed(2)} · explainer ${explainerSource()}`);
 
   const seen = new Set<string>((await store.getState<string[]>("seen_proposals")) ?? []);
   let tracked: TrackedTrade[] = (await store.getState<TrackedTrade[]>("tracked_trades")) ?? [];
@@ -225,17 +225,22 @@ async function main() {
               tp_order: { client_order_id: `${strategyId}-tp`, type: "take_profit", size: plan.size, stop_price: plan.takeProfitPrice, working_type: "mark_price" },
               sl_order: { client_order_id: `${strategyId}-sl`, type: "stop", size: plan.size, stop_price: plan.stopPrice, working_type: "mark_price" },
             });
-            await ledger.write(
-              "execution",
-              { proposalId: proposal.id, plan, request: { endpoint: "POST /v2/order/strategy", strategyId }, response: r as unknown as Record<string, unknown> },
-              { symbol, verdict: "SENT", strike: { sequence_id: r.sequence_id, message_id: r.message_id, client_order_id: r.primary_client_order_id, strategy_id: r.strategy_id } }
-            );
+            // The order is live on Strike now: remember it FIRST, so a database blip can't make us forget it.
             tracked.push({ proposalId: proposal.id, symbol, side: proposal.side, equityAtOpen: equity, placedAt: Date.now(), seenOpen: false, cyclesUnseen: 0 });
             positions.push({ symbol, size: plan.side === "buy" ? plan.size : `-${plan.size}`, entry_price: String(live) } as PositionResponse); // exposure for the rest of this cycle
             log(`SENT    ${symbol} bracket ${plan.side} ${plan.size} · seq ${r.sequence_id}`);
+            const execBody = { proposalId: proposal.id, plan, request: { endpoint: "POST /v2/order/strategy", strategyId }, response: r as unknown as Record<string, unknown> };
+            const execMeta = { symbol, verdict: "SENT", strike: { sequence_id: r.sequence_id, message_id: r.message_id, client_order_id: r.primary_client_order_id, strategy_id: r.strategy_id } };
+            await store.setState("tracked_trades", tracked).catch(() => undefined);
+            await ledger.write("execution", execBody, execMeta).catch(async (e) => {
+              log(`        execution sent but ledger write failed (${errMsg(e)}); retrying in 5s`);
+              await new Promise((res) => setTimeout(res, 5_000));
+              await ledger.write("execution", execBody, execMeta).catch((e2) => log(`        ledger still unavailable: ${errMsg(e2)}`));
+            });
           } catch (e) {
-            await ledger.write("error", { stage: "execution", proposalId: proposal.id, plan, error: errMsg(e) }, { symbol, verdict: "FAILED" });
+            // placeBracket itself failed (Strike rejected it or it never arrived): nothing was opened.
             log(`FAILED  ${symbol} ${errMsg(e)}`);
+            await ledger.write("error", { stage: "execution", proposalId: proposal.id, plan, error: errMsg(e) }, { symbol, verdict: "FAILED" }).catch(() => undefined);
           }
         } catch (e) {
           log(`warn ${symbol}: ${errMsg(e)}`);
