@@ -5,3 +5,4 @@ node_modules/
 smoke-report.json
 *.log
 .next/
+data/
